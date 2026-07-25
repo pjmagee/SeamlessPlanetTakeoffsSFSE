@@ -17,6 +17,7 @@ struct config
 			this->TakeoffExtensionLength = 0.01f;
 		this->EnableLandingProbe = reader.GetBoolean("Config", "EnableLandingProbe", true);
 		this->ScopedLoadScreenPatch = reader.GetBoolean("Config", "ScopedLoadScreenPatch", false);
+		this->HideLandingLoadScreen = reader.GetBoolean("Config", "HideLandingLoadScreen", true);
 	}
 
 	bool DisableTakeOffCam = 1;
@@ -33,4 +34,8 @@ struct config
 	// Do NOT simply disable the patch: manualLoadSystem depends on it and crashes
 	// without it (confirmed - the crash lands right after loadSystem returns).
 	bool ScopedLoadScreenPatch = false;
+	// Hold the last rendered frame across the landing load instead of letting the black
+	// loading screen appear - the same toggleFrameDraw trick seamless takeoff already uses
+	// for its own ~6s stall. A watchdog force-restores frame draw after 25s real time.
+	bool HideLandingLoadScreen = true;
 };
