@@ -209,15 +209,43 @@ callers binary-wide (fast travel, door transitions, and more), so it cannot be N
 globally the way takeoff NOPs its one site; the landing caller has to be pinned down
 specifically or the patch will break unrelated loads.
 
-**Lead worth chasing first:** `ID_119833` @ `14210f1c0` calls `ID_102937`, and sits adjacent
-to `ID_119830`, which `ID_119894` *does* call. A chain of
-`ID_119894 → ID_119830 → … → ID_102937` is plausible and would give landing a single
-NOP-able site in the spaceship cluster. Confirm by decompiling `ID_119830` and `ID_119833`
-and checking whether the landing path actually reaches the loader through them — do not
-assume the adjacency implies the call.
+### The landing load site — found
 
-Until that site is found, a seamless landing cannot be built: there is no way to buy the
-descent its ~8.9 s.
+**`ID_119833` @ `14210f1c0` is the candidate.** Its decompile contains:
+
+```c
+ID_102937(ID_922868 + 0xa08, &local_218);      // at 14210f422  =>  ID_119833 + 0x262
+```
+
+That is the *same shape* as takeoff's NOP site — same loader, same `global + 0xa08` first
+argument, same stack-struct second argument. Compare the takeoff assembly:
+
+```
+14211d311  MOV  RCX,qword ptr [0x145f4afd0]
+14211d318  ADD  RCX,0xa08
+14211d31f  LEA  RDX,[RSP + 0x40]
+14211d324  CALL 0x141a6a260                    // ID_119911 + 0x354, NOPed by src/plugin.cpp:662
+```
+
+So the landing equivalent of `src/plugin.cpp:662` is a 5-byte NOP at **`REL::ID(119833) + 0x262`**.
+
+**Who reaches it** (`XrefsToId` on `ID_119833`):
+
+| caller | note |
+|---|---|
+| `ID_82093` @ `1412b1260` | UI/menu cluster — `ID_82022` in the same range holds the `"TakeoffMenu"` string, so this is very likely the **star-map "Land here" confirm** path |
+| `ID_119814` @ `14210ba10` | spaceship cluster — candidate for the **ship-view POI land (`R`)** path |
+| `ID_120461` @ `142158590` | third entry point, unclassified |
+
+The two user-facing triggers (star-map landing-site selection, and ship-view `R` on a POI)
+therefore appear to converge on `ID_119833`, which is what makes a single NOP viable.
+
+**Still to verify before patching:** which caller corresponds to which trigger, and whether
+`ID_119833` is landing-specific or shared with other spaceship loads. If it is shared, the
+NOP must be gated on our own landing state (set from `LandingEvent state=0`) rather than
+applied statically — the same lesson as the `unloadCurrentLocation` crash: a patch that is
+correct for one path can be fatal on another. Prefer the dynamic-toggle pattern
+(`toggleUnloadLoadScreen`, `src/plugin.cpp`) over a startup patch.
 
 ## 7. Open questions, in priority order
 
