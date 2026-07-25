@@ -141,12 +141,59 @@ least as long as generation takes. Done right, the freeze at the swap is as shor
 Done wrong, the player gets a frozen screen instead of a loading screen, which is worse than
 vanilla. This is the single parameter that must be load-driven rather than tuned.
 
+## 6a. Runtime measurements (probe, 2026-07-25)
+
+Measured in-game with the observation probe (`src/landing.h`). These replace the guesses
+the design was previously carrying.
+
+**Player landing sequence**
+
+```
+t=67.018   LandingEvent ship=...C4085420 state=0  isPlayerShip=true
+t=67.028   STALL 8.880s wall (engine dt=0.010s)  skyMode 1->3   <-- the loading screen
+t=80.034   LandingEvent ship=...C4085420 state=1  isPlayerShip=true
+```
+
+- **The load is ~8.9 s.** That is the descent budget: the window a seamless landing has to
+  cover. It is the single number the feature is built around.
+- `LandingEvent state=0` fires ~10 ms *before* the load and is the trigger point, exactly
+  mirroring `TakeOffEvent state=0` (`src/plugin.cpp:325`).
+- `state=1` arrives ~13 s later, after the vanilla cutscene — the completion signal.
+- Payload confirmed as `{ NiPointer<TESObjectREFR> ship; uint32_t state; }`, same as
+  `TakeOffEvent`. Landing has the same NPC-ship noise takeoff does; filter by comparing
+  the ship pointer against a **cached** last-known player ship — `GetSpaceship()` returns
+  null mid-transition, which is precisely when the player's own event fires.
+
+**Existing takeoff, same session, for calibration**
+
+```
+STALL 5.167s  (skyMode 3->0, takeoffState=3)
+STALL 1.147s
+```
+
+Seamless takeoff already hides ~6.3 s of frozen frames behind `toggleFrameDraw(false)`
+plus the blur, and that reads acceptably in practice. So the technique is proven at ~6 s
+and landing needs it stretched to ~9 s — an extension of something that works, not a new
+bet. This materially de-risks §6's warning about frozen screens.
+
+**Landing camera**
+
+The vanilla landing cutscene is an exterior/third-person shot. That is inconsistent with
+seamless takeoff, which keeps the player in the cockpit looking out. `ID_119908` (takeoff)
+starts its camera path via `ID_113440(ID_937788, ...)` behind a guard, and `DisableTakeOffCam`
+(`src/plugin.cpp:678-682`) patches `+0x1c9` to skip that branch. **`ID_119894` (the landing
+workhorse) calls the same `ID_113440`**, so a `DisableLandingCam` is the same patch applied
+at the landing call site. The exact branch offset within `ID_119894` still needs a raw-asm
+pass — `XrefsToId` on the camera-path default objects (`ID_5522`/`ID_5523`) returns only
+data-table entries, not code sites, so it does not locate it.
+
 ## 7. Open questions, in priority order
 
 1. ~~Does the landing camera path run before or after the surface cell load?~~ **Resolved by
    observation: after.** Vanilla order is site-selection → loading screen → landing scene. Design
    above assumes this; worth confirming in RE before relying on it for timing.
-2. Confirm the `LandingEvent` payload layout (§3).
+2. ~~Confirm the `LandingEvent` payload layout.~~ **Resolved by probe (§6a):**
+   `{ NiPointer<TESObjectREFR> ship; uint32_t state; }`, state 0 then 1.
 3. Which of `119892`–`119896` is the true `initiateLandingSequence`, and does its completion
    counterpart contain an `addCellToLoader` call to NOP, as `ID_119911+0x354` does for takeoff
    (`src/plugin.cpp:662`)?
