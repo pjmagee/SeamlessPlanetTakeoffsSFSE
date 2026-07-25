@@ -99,12 +99,53 @@ a ceiling that falls back to a brief fade if generation overruns.
 - `fadeWeather` / `fadeAtmospherics` / `fadeImageSpaceSettings` / `fadeStarGlow` need only
   reverse-direction variants.
 
-## 6. Open questions, in priority order
+## 6. The mirrored pipeline
 
-1. **Does the landing camera path run before or after the surface cell load?** This determines the
-   entire state machine. If pre-load, the scene can hide generation and the shape is close to the
-   existing takeoff fade. If post-load, the scene cannot help and the orbit→atmosphere descent leg
-   must be authored in space, with the scene used only for touchdown.
+Vanilla landing order, from in-game observation: **pick landing site → loading screen → landing
+camera scene**. The scene therefore plays *after* the cell load, on the surface. It cannot hide
+generation, so the orbit→atmosphere descent leg must be authored in space and the vanilla scene
+used only for touchdown.
+
+That makes the feature a direct reverse of the existing takeoff pipeline:
+
+| takeoff (implemented) | landing (mirrored) |
+|---|---|
+| `TakeOffEvent` → capture cloud form, atmosphere form, star visibility | `LandingEvent` (`ID_120551`) → capture space-side state |
+| 9 s vanilla anim (`prefadeTimer`), then fade atmosphere/clouds/imagespace **out** | descend from orbit altitude, fade atmosphere/clouds/imagespace **in** |
+| `fadeBlur(t, true)` over final 0.5 s | `fadeBlur(t, true)` over final 0.5 s |
+| `toggleFrameDraw(false)` → `manualLoadSystem` → galaxy cell `0x18343` | `toggleFrameDraw(false)` → load surface cell |
+| `toggleFrameDraw(true)`, `sky->mode = 1`, `fadeStarGlow` in | `toggleFrameDraw(true)`, `sky->mode = 0`, hand into landing scene |
+
+Two pieces of maths already exist and only need their endpoints swapped:
+
+- **Descent path** — `hook_setSpacePlanetOrbit` (`src/plugin.cpp:417-423`) places the ship at
+  `planetComponent + worldUp * (radius + altitude)` with `altitude = 2500000` (`/500` for bodies
+  under 5000 km radius). Descent is the same expression with `altitude` interpolated toward zero.
+- **Atmosphere entry** — `fadeAtmospherics` (`src/plugin.cpp:207`) already lerps
+  `atmosphereTopRadius` between `surfaceRadius + 100` and `originalAtmosphereTopRadius`, and
+  `staticVisibility` between original and 1.0. Landing runs the same lerp with the endpoints
+  reversed. This is the "fog / atmosphere on entry" effect — it is already written.
+
+`fadeWeather` and `fadeImageSpaceSettings` reverse the same way; `fadeStarGlow` runs down instead
+of up.
+
+### The one place the mirror does not hold
+
+Takeoff's destination (galaxy cell `0x18343`) is nearly free to load, which is why a 0.05 s
+frame-draw freeze covers it (`src/plugin.cpp:522`). The surface is procedurally generated, and
+that cost is exactly what the vanilla loading screen spends.
+
+So the descent length cannot be authored like `TakeoffExtensionLength`. The surface request has to
+be issued at site-selection — the same moment vanilla issues it — and the descent must run at
+least as long as generation takes. Done right, the freeze at the swap is as short as takeoff's.
+Done wrong, the player gets a frozen screen instead of a loading screen, which is worse than
+vanilla. This is the single parameter that must be load-driven rather than tuned.
+
+## 7. Open questions, in priority order
+
+1. ~~Does the landing camera path run before or after the surface cell load?~~ **Resolved by
+   observation: after.** Vanilla order is site-selection → loading screen → landing scene. Design
+   above assumes this; worth confirming in RE before relying on it for timing.
 2. Confirm the `LandingEvent` payload layout (§3).
 3. Which of `119892`–`119896` is the true `initiateLandingSequence`, and does its completion
    counterpart contain an `addCellToLoader` call to NOP, as `ID_119911+0x354` does for takeoff
@@ -112,7 +153,7 @@ a ceiling that falls back to a brief fade if generation overruns.
 4. Is there a completion signal on the virtual-landing-block system to drive the swap, or must it
    be polled?
 
-## 7. Proposed config surface (not yet implemented)
+## 8. Proposed config surface (not yet implemented)
 
 ```ini
 EnableSeamlessLanding   = 0     ; default off until in-game verified
