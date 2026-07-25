@@ -16,7 +16,7 @@ struct config
 		if (this->TakeoffExtensionLength == 0)
 			this->TakeoffExtensionLength = 0.01f;
 		this->EnableLandingProbe = reader.GetBoolean("Config", "EnableLandingProbe", true);
-		this->PatchUnloadLoadScreen = reader.GetBoolean("Config", "PatchUnloadLoadScreen", true);
+		this->ScopedLoadScreenPatch = reader.GetBoolean("Config", "ScopedLoadScreenPatch", false);
 	}
 
 	bool DisableTakeOffCam = 1;
@@ -24,8 +24,13 @@ struct config
 	float TakeoffExtensionLength = 5.6f;
 	// Seamless-landing observation probe: logging only, writes no engine state.
 	bool EnableLandingProbe = true;
-	// The unloadCurrentLocation load-screen suppression is a GLOBAL patch to a generic
-	// function, so landing runs through it too. Set false to isolate whether it is what
-	// drops the player into the exterior cell instead of the cockpit after landing.
-	bool PatchUnloadLoadScreen = true;
+	// unloadCurrentLocation's load-screen suppression.
+	//   false (default) - original behaviour: patched once at startup, stays patched.
+	//                     Proven, but it is a GLOBAL patch to a generic function, so
+	//                     landing runs through it too.
+	//   true            - apply it ONLY around manualLoadSystem's own call and restore
+	//                     immediately after, so landing sees the function unpatched.
+	// Do NOT simply disable the patch: manualLoadSystem depends on it and crashes
+	// without it (confirmed - the crash lands right after loadSystem returns).
+	bool ScopedLoadScreenPatch = false;
 };

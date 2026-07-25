@@ -43,6 +43,8 @@ struct takeoffState
 
 takeoffState g_takeoffState;
 
+void toggleUnloadLoadScreen(bool suppress);
+
 void updateDiscoveryInfo(RE::TESObjectREFR* ship) 
 {
 	using func_updateDiscoveredStatus_t = void* (RE::Actor*, RE::BGSLocation*);
@@ -88,7 +90,16 @@ void manualLoadSystem(RE::TESObjectREFR* ship)
 	using func_loadSystem2_t = void* (RE::TES *, RE::TESObjectCELL *, RE::NiPoint3 *, bool);
 	REL::Relocation<func_loadSystem2_t>unloadCurrentLocation{ REL::ID(46037) };
 
+	// In scoped mode the function is unpatched at rest, so suppress the load screen for
+	// the duration of this call only. In global mode the startup patch already covers it.
+	if (settings.ScopedLoadScreenPatch)
+		toggleUnloadLoadScreen(true);
+
 	unloadCurrentLocation(RE::TES::GetSingleton(), RE::PlayerCharacter::GetSingleton()->parentCell, &a3, 1);
+
+	if (settings.ScopedLoadScreenPatch)
+		toggleUnloadLoadScreen(false);
+
 	ship->SetParentCell(0);
 
 	using func_unkfunc_t = void* (RE::TESObjectREFR**, RE::BGSLocation*, RE::BGSLocation*);
@@ -292,6 +303,33 @@ void toggleFrameDraw(bool enable) //kinda dumb but eh
 	}
 
 	REL::WriteSafeData(call, instruction);
+}
+
+// unloadCurrentLocation decides whether to raise a load screen at +0x9b4. Writing 0xEB
+// (unconditional jmp) skips that branch. The original byte is captured on first use
+// rather than assumed, so we can put it back exactly.
+//
+// manualLoadSystem REQUIRES this suppression around its own call - leaving the function
+// unpatched there crashes immediately after loadSystem returns. Scoping it this way keeps
+// takeoff working while leaving the function untouched for every other caller, landing
+// included.
+void toggleUnloadLoadScreen(bool suppress)
+{
+	static byte originalByte = 0;
+	static bool haveOriginal = false;
+
+	uintptr_t addr = REL::Relocation<uintptr_t>(REL::ID(46037)).address();
+	byte* shouldStartLoadScreen = (byte*)(addr + 0x9b4);
+
+	if (!haveOriginal)
+	{
+		originalByte = *shouldStartLoadScreen;
+		haveOriginal = true;
+		REX::INFO("captured original unloadCurrentLocation byte at +0x9b4: {:02X}", originalByte);
+	}
+
+	byte value = suppress ? (byte)0xEB : originalByte;
+	REL::WriteSafeData(shouldStartLoadScreen, value);
 }
 
 void toggleForceCloudRefresh(bool enable)
@@ -672,16 +710,17 @@ void OnMessage(SFSE::MessagingInterface::Message* message)
 		byte jmp = 0xEB;
 
 		//prevent the unload function from showing the load screen
-		//NOTE: this is a global patch to a generic function - landing goes through it too.
-		if (settings.PatchUnloadLoadScreen)
+		//NOTE: global mode patches a GENERIC function, so landing runs through it too.
+		//Scoped mode instead patches only around manualLoadSystem's own call.
+		if (settings.ScopedLoadScreenPatch)
+			REX::INFO("ScopedLoadScreenPatch enabled - unloadCurrentLocation patched only around manualLoadSystem");
+		else
 		{
 			uintptr_t unloadCurrentLocation = REL::Relocation<uintptr_t>( REL::ID(46037)).address();
 			byte* shouldStartLoadScreen = (byte*)(unloadCurrentLocation + 0x9b4);
 
 			REL::WriteSafeData(shouldStartLoadScreen, jmp);
 		}
-		else
-			REX::INFO("PatchUnloadLoadScreen disabled - leaving unloadCurrentLocation unpatched");
 
 		if (settings.DisableTakeOffCam) 
 		{
