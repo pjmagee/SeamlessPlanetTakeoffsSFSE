@@ -669,13 +669,19 @@ void OnMessage(SFSE::MessagingInterface::Message* message)
 
 		REL::WriteSafeData(addCellToLoaderCall, nopcall);
 
-		//prevent the unload function from showing the load screen
-		uintptr_t unloadCurrentLocation = REL::Relocation<uintptr_t>( REL::ID(46037)).address();
-		byte* shouldStartLoadScreen = (byte*)(unloadCurrentLocation + 0x9b4);
-
 		byte jmp = 0xEB;
 
-		REL::WriteSafeData(shouldStartLoadScreen, jmp);
+		//prevent the unload function from showing the load screen
+		//NOTE: this is a global patch to a generic function - landing goes through it too.
+		if (settings.PatchUnloadLoadScreen)
+		{
+			uintptr_t unloadCurrentLocation = REL::Relocation<uintptr_t>( REL::ID(46037)).address();
+			byte* shouldStartLoadScreen = (byte*)(unloadCurrentLocation + 0x9b4);
+
+			REL::WriteSafeData(shouldStartLoadScreen, jmp);
+		}
+		else
+			REX::INFO("PatchUnloadLoadScreen disabled - leaving unloadCurrentLocation unpatched");
 
 		if (settings.DisableTakeOffCam) 
 		{

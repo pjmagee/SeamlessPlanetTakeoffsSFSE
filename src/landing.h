@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 #include "BobbyRE/BobbyRE.h"
 
 // Seamless landing — observation probe.
@@ -25,6 +27,17 @@ namespace landing
 		bool     initialised;
 		float    clock;          // seconds since plugin init, accumulated from PCUpdate dt
 		float    lastSampleTime;
+		float    lastHeartbeat;
+
+		// Wall-clock stall detection. PCUpdate does not run during a loading screen, so
+		// a large real-time gap between consecutive calls IS the load. This is how we
+		// measure what the descent has to cover.
+		std::chrono::steady_clock::time_point lastTick;
+		bool                                  haveLastTick;
+
+		// GetSpaceship() returns null mid-transition, so cache the last non-null value
+		// to identify the player's ship in a LandingEvent that fires during one.
+		void*    lastKnownPlayerShip;
 
 		// edge-tracked values
 		void*    lastParentCell;
@@ -65,6 +78,29 @@ namespace landing
 	inline void sample(float dt, int takeoffState)
 	{
 		g_probe.clock += dt;
+
+		// --- stall detector -------------------------------------------------------
+		// The loading screen is a window in which PCUpdate simply is not called. Compare
+		// real elapsed time against the frame dt the engine handed us; a large divergence
+		// is the load, and its magnitude is the descent budget we need to cover.
+		const auto now = std::chrono::steady_clock::now();
+		if (g_probe.haveLastTick)
+		{
+			const double wall = std::chrono::duration<double>(now - g_probe.lastTick).count();
+			if (wall > 0.25)
+			{
+				REX::INFO("[probe] t={:.3f} STALL {:.3f}s wall (engine dt={:.3f}s) cell={:08X} skyMode={} takeoffState={} <-- load boundary",
+					g_probe.clock, wall, dt, formIDOf(currentCell()), skyMode(), takeoffState);
+			}
+		}
+		g_probe.lastTick     = now;
+		g_probe.haveLastTick = true;
+
+		if (auto* player = RE::PlayerCharacter::GetSingleton())
+		{
+			if (void* ship = player->GetSpaceship())
+				g_probe.lastKnownPlayerShip = ship;
+		}
 
 		RE::TESObjectCELL* cell   = currentCell();
 		uint32_t           cellID = formIDOf(cell);
@@ -159,17 +195,24 @@ namespace landing
 			if (auto* player = RE::PlayerCharacter::GetSingleton())
 				playerShip = player->GetSpaceship();
 
-			const bool word0IsPlayerShip = (playerShip != nullptr) &&
-			                               (reinterpret_cast<void*>(words[0]) == playerShip);
+			// GetSpaceship() is null mid-transition — which is exactly when the player's
+			// own LandingEvent fires — so fall back to the cached pointer. Confirmed from
+			// the first probe run: word0 matched the cached ship exactly.
+			void* compareTo = playerShip ? playerShip : g_probe.lastKnownPlayerShip;
+
+			const bool isPlayerShip = (compareTo != nullptr) &&
+			                          (reinterpret_cast<void*>(words[0]) == compareTo);
 
 			g_probe.sawLandingEvent  = true;
 			g_probe.landingEventTime = g_probe.clock;
 			g_probe.lastSampleTime   = g_probe.clock;
 
-			REX::INFO("[probe] t={:.3f} LandingEvent raw=[{:016X} {:016X}] playerShip={:016X} word0IsPlayerShip={} (lo32 of word1={} - candidate 'state')",
-				g_probe.clock, words[0], words[1],
-				reinterpret_cast<uintptr_t>(playerShip), word0IsPlayerShip,
-				static_cast<uint32_t>(words[1] & 0xFFFFFFFFull));
+			REX::INFO("[probe] t={:.3f} LandingEvent ship={:016X} state={} isPlayerShip={} (live={:016X} cached={:016X})",
+				g_probe.clock, words[0],
+				static_cast<uint32_t>(words[1] & 0xFFFFFFFFull),
+				isPlayerShip,
+				reinterpret_cast<uintptr_t>(playerShip),
+				reinterpret_cast<uintptr_t>(g_probe.lastKnownPlayerShip));
 
 			return RE::BSEventNotifyControl::kContinue;
 		}
