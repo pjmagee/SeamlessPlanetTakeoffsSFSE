@@ -187,6 +187,38 @@ at the landing call site. The exact branch offset within `ID_119894` still needs
 pass — `XrefsToId` on the camera-path default objects (`ID_5522`/`ID_5523`) returns only
 data-table entries, not code sites, so it does not locate it.
 
+## 6b. Suppressing the landing load screen — the real blocker
+
+To insert a descent, the engine's landing cell-load must be **deferred**, not merely hidden.
+Nothing can be rendered during it: the probe showed `PCUpdate` is not called at all for the
+8.9 s (§6a), so there is no frame in which to draw a descent. The load has to be stopped,
+the descent played, and the load then triggered by us — exactly what takeoff does.
+
+**The cell loader is `ID_102937` @ `141a6a260`.** Takeoff NOPs a single call to it:
+
+```
+14211d324  CALL 0x141a6a260     <-- ID_119911 + 0x354, the call src/plugin.cpp:662 NOPs
+```
+
+Verified by dumping `ID_119911`'s raw assembly; the `+0x354` in the existing source lands
+exactly on that instruction.
+
+**This does not mirror.** `ID_119894` — the landing workhorse — does **not** call
+`ID_102937` at all, so landing reaches the loader by a different route. `ID_102937` has ~26
+callers binary-wide (fast travel, door transitions, and more), so it cannot be NOP'd
+globally the way takeoff NOPs its one site; the landing caller has to be pinned down
+specifically or the patch will break unrelated loads.
+
+**Lead worth chasing first:** `ID_119833` @ `14210f1c0` calls `ID_102937`, and sits adjacent
+to `ID_119830`, which `ID_119894` *does* call. A chain of
+`ID_119894 → ID_119830 → … → ID_102937` is plausible and would give landing a single
+NOP-able site in the spaceship cluster. Confirm by decompiling `ID_119830` and `ID_119833`
+and checking whether the landing path actually reaches the loader through them — do not
+assume the adjacency implies the call.
+
+Until that site is found, a seamless landing cannot be built: there is no way to buy the
+descent its ~8.9 s.
+
 ## 7. Open questions, in priority order
 
 1. ~~Does the landing camera path run before or after the surface cell load?~~ **Resolved by
