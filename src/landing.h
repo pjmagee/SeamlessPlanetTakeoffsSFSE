@@ -148,22 +148,43 @@ namespace landing
 			}
 		}
 
-		if (auto* player = RE::PlayerCharacter::GetSingleton())
+		// Same reasoning as the location read below: leave the ship pointer alone while the
+		// takeoff state machine is mid-transition. The cached value is what we actually
+		// want anyway, and it survives across the transition.
+		if (takeoffState == 0)
 		{
-			if (void* ship = player->GetSpaceship())
-				g_probe.lastKnownPlayerShip = ship;
+			if (auto* player = RE::PlayerCharacter::GetSingleton())
+			{
+				if (void* ship = player->GetSpaceship())
+					g_probe.lastKnownPlayerShip = ship;
+			}
 		}
 
 		RE::TESObjectCELL* cell   = currentCell();
 		uint32_t           cellID = formIDOf(cell);
 		uint32_t           mode   = skyMode();
 
+		// GetCurrentLocation() walks parentCell internally. During a takeoff transition
+		// manualLoadSystem has already done ship->SetParentCell(0) and is moving the player
+		// between cells, so that walk can run over half-torn-down state. Skip it entirely
+		// unless the takeoff state machine is idle - the probe is not worth a crash, and
+		// the takeoff path already logs its own transitions.
 		RE::BGSLocation* loc   = nullptr;
 		uint32_t         locID = 0;
-		if (auto* player = RE::PlayerCharacter::GetSingleton())
+		if (takeoffState == 0)
 		{
-			loc   = player->GetCurrentLocation();
-			locID = formIDOf(loc);
+			if (auto* player = RE::PlayerCharacter::GetSingleton())
+			{
+				loc   = player->GetCurrentLocation();
+				locID = formIDOf(loc);
+			}
+		}
+		else
+		{
+			// Carry the last known values forward so the edge detector does not fire a
+			// spurious CHANGE just because we declined to read.
+			loc   = static_cast<RE::BGSLocation*>(g_probe.lastLocation);
+			locID = g_probe.lastLocationID;
 		}
 
 		if (!g_probe.initialised)
