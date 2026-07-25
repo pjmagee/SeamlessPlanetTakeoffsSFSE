@@ -1,5 +1,6 @@
 #include "BobbyRE/BobbyRE.h"
 #include "config.h"
+#include "landing.h"
 
 config settings;
 RE::BGSLocation* prevLocation;
@@ -449,6 +450,9 @@ namespace hooks
 
 	void hook_PCUpdate(RE::PlayerCharacter* player, float dt)
 	{
+		if (settings.EnableLandingProbe)
+			landing::sample(dt, static_cast<int>(g_takeoffState.state));
+
 		switch (g_takeoffState.state)
 		{
 		case NOT_STARTED:
@@ -682,5 +686,8 @@ void OnMessage(SFSE::MessagingInterface::Message* message)
 		}
 
 		hooks::install();
+
+		if (settings.EnableLandingProbe)
+			landing::install();
 	}
 }

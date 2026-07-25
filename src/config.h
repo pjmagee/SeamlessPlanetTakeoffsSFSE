@@ -15,9 +15,12 @@ struct config
 		this->TakeoffExtensionLength = reader.GetFloat("Config", "TakeoffExtensionLength", 5.6f);
 		if (this->TakeoffExtensionLength == 0)
 			this->TakeoffExtensionLength = 0.01f;
+		this->EnableLandingProbe = reader.GetBoolean("Config", "EnableLandingProbe", true);
 	}
 
 	bool DisableTakeOffCam = 1;
 	bool EnableLoadBlur = true;
 	float TakeoffExtensionLength = 5.6f;
+	// Seamless-landing observation probe: logging only, writes no engine state.
+	bool EnableLandingProbe = true;
 };
